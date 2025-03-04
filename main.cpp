@@ -67,7 +67,7 @@ int main(int, char**)
     g_GraphEditor.setModel(g_GraphModel);
 
     // Try to load the graph data
-    g_GraphModel->loadFromFile("C:/Users/komgr/source/repos/komcat/CppImGui/x64/Debug/WorkingGraphs.json");
+    g_GraphModel->loadFromFile("C:/Users/komgr/source/repos/komcat/CppImGui/WorkingGraphs.json");
     // Our state
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 

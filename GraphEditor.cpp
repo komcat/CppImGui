@@ -238,6 +238,7 @@ void GraphEditor::renderEdgeList() {
     }
 }
 
+// Modify the renderGraphCanvas method to enable proper panning in all directions
 void GraphEditor::renderGraphCanvas() {
     if (!currentGraph) {
         ImGui::Text("No graph selected");
@@ -246,6 +247,8 @@ void GraphEditor::renderGraphCanvas() {
 
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    canvasWidth = canvasSize.x;
+    canvasHeight = canvasSize.y;
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
@@ -254,23 +257,74 @@ void GraphEditor::renderGraphCanvas() {
         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
         CANVAS_BG_COLOR);
 
-    // Handle canvas controls (panning, zooming)
-    ImGui::InvisibleButton("canvas", canvasSize);
+    // Create an invisible button that covers the canvas
+    ImGui::InvisibleButton("canvas", canvasSize,
+        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
 
-    // Panning
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    bool isCanvasHovered = ImGui::IsItemHovered();
+    bool isCanvasActive = ImGui::IsItemActive();
+
+    // Panning - now available with both middle mouse button and right button + Alt
+    bool isPanning = false;
+
+    if ((isCanvasActive && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) ||
+        (isCanvasActive && ImGui::IsMouseDragging(ImGuiMouseButton_Right) && ImGui::GetIO().KeyAlt)) {
         canvasOffset.x += ImGui::GetIO().MouseDelta.x;
         canvasOffset.y += ImGui::GetIO().MouseDelta.y;
+        isPanning = true;
     }
 
-    // Zooming
-    if (ImGui::IsItemHovered()) {
+    // Zooming (improved with smoothing)
+    if (isCanvasHovered) {
         float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0) {
-            canvasScale += wheel * 0.1f;
-            canvasScale = std::max(0.1f, canvasScale);
+            // Get mouse position before zooming
+            ImVec2 mousePos = ImGui::GetMousePos();
+            ImVec2 mouseCanvasPos = ImVec2(
+                (mousePos.x - canvasPos.x - canvasOffset.x) / canvasScale,
+                (mousePos.y - canvasPos.y - canvasOffset.y) / canvasScale
+            );
+
+            // Adjust scale with smooth factor
+            float oldScale = canvasScale;
+            canvasScale += wheel * 0.1f * canvasScale; // Proportional zooming
+            canvasScale = std::max(0.1f, std::min(canvasScale, 5.0f)); // Limit zoom range
+
+            // Adjust offset to zoom at mouse position
+            canvasOffset.x += mouseCanvasPos.x * (oldScale - canvasScale);
+            canvasOffset.y += mouseCanvasPos.y * (oldScale - canvasScale);
         }
     }
+
+    // Draw grid (optional, helps with orientation)
+    const float GRID_SIZE = 50.0f * canvasScale;
+    const ImU32 GRID_COLOR = IM_COL32(60, 60, 60, 100);
+
+    float gridOffsetX = fmodf(canvasOffset.x, GRID_SIZE);
+    float gridOffsetY = fmodf(canvasOffset.y, GRID_SIZE);
+
+    for (float x = gridOffsetX; x < canvasSize.x; x += GRID_SIZE) {
+        drawList->AddLine(
+            ImVec2(canvasPos.x + x, canvasPos.y),
+            ImVec2(canvasPos.x + x, canvasPos.y + canvasSize.y),
+            GRID_COLOR
+        );
+    }
+
+    for (float y = gridOffsetY; y < canvasSize.y; y += GRID_SIZE) {
+        drawList->AddLine(
+            ImVec2(canvasPos.x, canvasPos.y + y),
+            ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + y),
+            GRID_COLOR
+        );
+    }
+
+    // Draw the origin point (center of the canvas)
+    ImVec2 originPos = ImVec2(
+        canvasPos.x + canvasOffset.x,
+        canvasPos.y + canvasOffset.y
+    );
+    drawList->AddCircleFilled(originPos, 5.0f, IM_COL32(255, 0, 0, 200));
 
     // Draw edges
     for (const auto& edge : currentGraph->edges) {
@@ -287,8 +341,8 @@ void GraphEditor::renderGraphCanvas() {
         drawNode(drawList, node, canvasPos);
     }
 
-    // Check for node selection
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+    // Node selection and dragging
+    if (isCanvasActive && !isPanning && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         ImVec2 mousePos = ImGui::GetMousePos();
         bool nodeSelected = false;
 
@@ -323,8 +377,18 @@ void GraphEditor::renderGraphCanvas() {
             node->y += delta.y / canvasScale;
         }
     }
-}
 
+    // Display canvas controls information
+    ImGui::SetCursorPos(ImVec2(10, 10));
+    ImGui::BeginChild("CanvasControls", ImVec2(200, 100), true);
+    ImGui::Text("Canvas Controls:");
+    ImGui::BulletText("Pan: Middle Mouse");
+    ImGui::BulletText("Alt+Right Mouse");
+    ImGui::BulletText("Zoom: Mouse Wheel");
+    ImGui::BulletText("Select: Left Click");
+    ImGui::Text("Scale: %.2f", canvasScale);
+    ImGui::EndChild();
+}
 void GraphEditor::drawNode(ImDrawList* drawList, const std::shared_ptr<Node>& node, const ImVec2& canvasPos) {
     ImVec2 nodePos = ImVec2(
         canvasPos.x + node->x * canvasScale + canvasOffset.x,
@@ -560,19 +624,30 @@ void GraphEditor::layoutGraph() {
         int cols = static_cast<int>(sqrt(nodeCount));
         int rows = (nodeCount + cols - 1) / cols;
 
-        float startX = canvasWidth / 2.0f - (cols * SPACING) / 2.0f;
-        float startY = canvasHeight / 2.0f - (rows * SPACING) / 2.0f;
+        // Calculate the bounds of the layout
+        float layoutWidth = cols * SPACING;
+        float layoutHeight = rows * SPACING;
 
+        // Center the layout in the visible area
+        float startX = layoutWidth / 2.0f;
+        float startY = layoutHeight / 2.0f;
+
+        // Reset the canvas offset to center the graph
+        canvasOffset = ImVec2(
+            (canvasWidth / 2.0f) - startX * canvasScale,
+            (canvasHeight / 2.0f) - startY * canvasScale
+        );
+
+        // Position the nodes in the grid
         for (int i = 0; i < nodeCount; i++) {
             int row = i / cols;
             int col = i % cols;
 
-            currentGraph->nodes[i]->x = startX + col * SPACING;
-            currentGraph->nodes[i]->y = startY + row * SPACING;
+            currentGraph->nodes[i]->x = (col - cols / 2.0f) * SPACING;
+            currentGraph->nodes[i]->y = (row - rows / 2.0f) * SPACING;
         }
     }
 }
-
 void GraphEditor::loadFile(const std::string& filename) {
     if (model->loadFromFile(filename)) {
         std::cout << "Successfully loaded graph data from: " << filename << std::endl;

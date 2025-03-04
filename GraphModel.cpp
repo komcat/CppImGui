@@ -2,6 +2,8 @@
 #include <fstream>
 #include <iostream>
 
+// Modify the loadFromFile method in GraphModel.cpp to load node positions:
+
 bool GraphModel::loadFromFile(const std::string& filename) {
     try {
         // Clear existing data
@@ -34,10 +36,39 @@ bool GraphModel::loadFromFile(const std::string& filename) {
             auto graph = getGraph(graphName);
 
             // Add nodes
-            if (graphData.contains("nodes") && graphData["nodes"].is_array()) {
-                for (const auto& nodeId : graphData["nodes"]) {
-                    if (nodeId.is_string()) {
-                        graph->addNode(nodeId);
+            if (graphData.contains("nodes")) {
+                // Check if nodes is an array of objects or just an array of strings
+                if (graphData["nodes"].is_array()) {
+                    if (graphData["nodes"].empty()) {
+                        // Empty array, nothing to do
+                    }
+                    else if (graphData["nodes"][0].is_string()) {
+                        // Old format: array of strings
+                        for (const auto& nodeId : graphData["nodes"]) {
+                            if (nodeId.is_string()) {
+                                graph->addNode(nodeId);
+                            }
+                        }
+                    }
+                    else if (graphData["nodes"][0].is_object()) {
+                        // New format: array of objects with position information
+                        for (const auto& nodeData : graphData["nodes"]) {
+                            if (nodeData.contains("id") && nodeData["id"].is_string()) {
+                                std::string nodeId = nodeData["id"];
+                                graph->addNode(nodeId);
+
+                                auto node = graph->findNode(nodeId);
+                                if (node) {
+                                    // Load position if available
+                                    if (nodeData.contains("x") && nodeData["x"].is_number()) {
+                                        node->x = nodeData["x"];
+                                    }
+                                    if (nodeData.contains("y") && nodeData["y"].is_number()) {
+                                        node->y = nodeData["y"];
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -67,6 +98,9 @@ bool GraphModel::loadFromFile(const std::string& filename) {
     }
 }
 
+
+// Modify the saveToFile method in GraphModel.cpp to include node positions:
+
 bool GraphModel::saveToFile(const std::string& filename) {
     try {
         nlohmann::json jsonData;
@@ -79,10 +113,14 @@ bool GraphModel::saveToFile(const std::string& filename) {
 
             nlohmann::json graphJson;
 
-            // Add nodes
+            // Add nodes with position information
             graphJson["nodes"] = nlohmann::json::array();
             for (const auto& node : graph->nodes) {
-                graphJson["nodes"].push_back(node->id);
+                nlohmann::json nodeJson;
+                nodeJson["id"] = node->id;
+                nodeJson["x"] = node->x;
+                nodeJson["y"] = node->y;
+                graphJson["nodes"].push_back(nodeJson);
             }
 
             // Add edges
